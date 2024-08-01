@@ -1,3 +1,5 @@
+THIS IS A MAKESHIFT TO GENERATING NMRS ART LINE LIST FROM YOUR NORMAL NMRS WEB INTERFACE
+
 This is a python script that connects to NMRS database and pulls data using a query
 
 the app assumes that below is your database details:
