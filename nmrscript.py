@@ -87,7 +87,7 @@ def nmrsquery():
     start_time = time.time()  # Start time measurement
     #status_label.config(text=f"Pulling data from NMRS database...")
     total_rows, df2 = biometrics()
-    status_label2.config(text=f"Please be patient this will take approximately: {0.005 * total_rows} minutes")
+    status_label2.config(text=f"Please don't close the SOFTWARE, you will be prompted to save when it completes")
     progress_bar['maximum'] = total_rows  # Set to 100 for percentage completion
     for index, row in df2.iterrows():
             
@@ -105,7 +105,8 @@ def nmrsquery():
         
         # Simulate time-consuming task
         time.sleep(0.0001)
-        
+    status_label.config(text=f"Processing... this will take an estimated time of: {0.005 * total_rows} minutes") 
+    root.update_idletasks()
            
     db_cursor = db_connection.cursor()
     db_cursor.execute("""
@@ -170,6 +171,11 @@ def nmrsquery():
     MAX(IF(obs.concept_id=856,obs.value_numeric, NULL))as `LastViralLoad`,
     MAX(IF(obs.concept_id = 856, STR_TO_DATE(obsmax.last_date, '%Y-%m-%d'), NULL)) AS `LastViralLoadDate`,
     MAX(IF(obs.concept_id=159951,STR_TO_DATE(obs.value_datetime,'%Y-%m-%d'),null)) as `LastSpecimenCollectionDate`,
+    ( SELECT  DATE_FORMAT(obs.value_datetime,'%Y-%m-%d') FROM `obs`
+     WHERE obs.person_id = p.`patient_id`  
+     AND obs.`concept_id` IN (159951) 
+     AND obs.`obs_datetime` <= CURDATE() 
+     ORDER BY obs.obs_datetime DESC LIMIT 1) AS `LastDateOfSampleCollection`,
     MAX(IF(obs2.concept_id=165708,cn2.name,NULL)) AS `RegimenLineAtARTStart`,
     MAX(
     IF(obs2.concept_id=164506,cn2.`name`,
@@ -204,8 +210,8 @@ def nmrsquery():
     MAX(IF(obs.concept_id=165242,cn1.name,null)) as TransferInStatus,
     getconceptval(MAX(IF(obs.concept_id=162240,obs.obs_id,null) ),159368,p.patient_id) AS `DaysOfARVRefill`,
     MAX(IF((obs.concept_id=165708 and enc.form_id=27 AND obs.voided =0),container.last_date,null)) as `Pharmacy_LastPickupdate`,
-    MAX(IF(obs.concept_id=165708 AND obs.`obs_datetime` <= CURDATE(),DATE_FORMAT(container.last_date, '%d-%b-%Y'), NULL)) AS `Clinic_Visit_Lastdate`,
-    MAX(IF(obs.concept_id = 856, STR_TO_DATE(obsmax.last_date, '%Y-%m-%d'), NULL)) AS `LastViralLoadDate`
+    MAX(IF(obs.concept_id=165708 AND obs.`obs_datetime` <= CURDATE(),DATE_FORMAT(container.last_date, '%d-%b-%Y'), NULL)) AS `Clinic_Visit_Lastdate`
+    /*MAX(IF(obs.concept_id = 856, STR_TO_DATE(obsmax.last_date, '%Y-%m-%d'), NULL)) AS `LastViralLoadDate`*/
 
 
 
@@ -255,7 +261,7 @@ def nmrsquery():
     print(df1)
     end_time = time.time()  # End time measurement
     total_time = end_time - start_time  # Calculate total time taken
-    status_label.config(text=f"Conversion Complete! Time taken: {total_time:.2f} seconds")
+    status_label.config(text=f"Thanks for your patience, process Completed! Time taken: {total_time:.2f} seconds")
     #status_label2.config(text=f"Just a moment! Formating and Saving File...")
     #df1.to_excel('df1.xlsx')
     output_file_name = "MAKE-SHIFT ART-LINE LIST".split("/")[-1][:-4]
@@ -375,7 +381,7 @@ root.config(bg="#f0f0f0")
 convert_button = tk.Button(root, text="CONNECT & GENERATE LINE LIST...", command=nmrsquery, font=("Helvetica", 14), bg="#4caf50", fg="#ffffff")
 convert_button.pack(pady=5)
 tooltip = CreateToolTip(convert_button, "Connects and pull data from,\n opeNMRS Database.")
-convert_button1 = tk.Button(root, text="EXIT CONVERTER", command=root.destroy, font=("Helvetica", 14), bg="red", fg="#ffffff")
+convert_button1 = tk.Button(root, text="EXIT APPLICATION", command=root.destroy, font=("Helvetica", 14), bg="red", fg="#ffffff")
 convert_button1.pack(pady=25)
 
 #def process_data(row):
