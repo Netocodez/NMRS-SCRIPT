@@ -482,23 +482,10 @@ def nmrscripttoRadet():
     df['IIT Chance (%)']=''
     df['Date calculated (yyyy-mm-dd)']=''
     df['Case Manager']=''
-    #df['EnrollmentDate']=''
+    df['EnrollmentDate']=''
     df['Date of Viral Load Sample Collection (yyyy-mm-dd)'] = df['LastDateOfSampleCollection']
     df.loc[(df['CurrentARTStatus'] == 'LTFU') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['IIT DATE']
     df.loc[(df['CurrentARTStatus'] == 'Active') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['LastPickupDate']
-    df.loc[df['CurrentRegimenLine']=="Adult 1st line ARV regimen",'CurrentRegimenLine']='Adult.1st.Line'
-    df.loc[df['CurrentRegimenLine']=="Adult 2nd line ARV regimen",'CurrentRegimenLine']='Adult.2nd.Line'
-    df.loc[df['CurrentRegimenLine']=="Adult 3rd line ARV regimen",'CurrentRegimenLine']='Adult.3rd.Line'
-    df.loc[df['CurrentRegimenLine']=="Child 1st line ARV regimen",'CurrentRegimenLine']='Peds.1st.Line'
-    df.loc[df['CurrentRegimenLine']=="Child 2nd line ARV regimen",'CurrentRegimenLine']='Peds.2nd.Line'
-    df.loc[df['CurrentRegimenLine']=="Child 3rd line ARV regimen",'CurrentRegimenLine']='Peds.3rd.Line'
-    df.loc[df['InitialRegimenLine']=="Adult 1st line ARV regimen",'InitialRegimenLine']='Adult.1st.Line'
-    df.loc[df['InitialRegimenLine']=="Adult 2nd line ARV regimen",'InitialRegimenLine']='Adult.2nd.Line'
-    df.loc[df['InitialRegimenLine']=="Adult 3rd line ARV regimen",'InitialRegimenLine']='Adult.3rd.Line'
-    df.loc[df['InitialRegimenLine']=="Child 1st line ARV regimen",'InitialRegimenLine']='Peds.1st.Line'
-    df.loc[df['InitialRegimenLine']=="Child 2nd line ARV regimen",'InitialRegimenLine']='Peds.2nd.Line'
-    df.loc[df['InitialRegimenLine']=="Child 3rd line ARV regimen",'InitialRegimenLine']='Peds.3rd.Line'
-    
     df.loc[df['CurrentARTStatus']=="Death",'CurrentARTStatus']='Dead'
     df.loc[df['CurrentARTStatus']=="Discontinued Care",'CurrentARTStatus']='Stopped'
     df.loc[df['CurrentARTStatus']=="Transferred out",'CurrentARTStatus']='Transferred Out'
@@ -512,8 +499,6 @@ def nmrscripttoRadet():
     df['Date of Current Viral Load (yyyy-mm-dd)']=pd.to_datetime(df['ViralLoadReportedDate'],errors='coerce')
     df['LastViralLoadDate']=pd.to_datetime(df['LastViralLoadDate'],errors='coerce')
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].isna()) | (df['LastViralLoadDate'] > df['Date of Current Viral Load (yyyy-mm-dd)'])),'Date of Current Viral Load (yyyy-mm-dd)']=df['LastViralLoadDate']
-    df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] <= 1000)),'ViralLoadIndication']='Routine - Routine'
-    df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] > 1000)),'ViralLoadIndication']='Targeted - Post EAC'
     
     
     #rearrange columns
@@ -786,23 +771,10 @@ def nmrscripttoRadet2():
     df['IIT Chance (%)']=''
     df['Date calculated (yyyy-mm-dd)']=''
     df['Case Manager']=''
-    #df['EnrollmentDate']=''
+    df['EnrollmentDate']=''
     df['Date of Viral Load Sample Collection (yyyy-mm-dd)'] = df['LastDateOfSampleCollection']
     df.loc[(df['CurrentARTStatus'] == 'LTFU') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['IIT DATE']
     df.loc[(df['CurrentARTStatus'] == 'Active') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['LastPickupDate']
-    df.loc[df['CurrentRegimenLine']=="Adult 1st line ARV regimen",'CurrentRegimenLine']='Adult.1st.Line'
-    df.loc[df['CurrentRegimenLine']=="Adult 2nd line ARV regimen",'CurrentRegimenLine']='Adult.2nd.Line'
-    df.loc[df['CurrentRegimenLine']=="Adult 3rd line ARV regimen",'CurrentRegimenLine']='Adult.3rd.Line'
-    df.loc[df['CurrentRegimenLine']=="Child 1st line ARV regimen",'CurrentRegimenLine']='Peds.1st.Line'
-    df.loc[df['CurrentRegimenLine']=="Child 2nd line ARV regimen",'CurrentRegimenLine']='Peds.2nd.Line'
-    df.loc[df['CurrentRegimenLine']=="Child 3rd line ARV regimen",'CurrentRegimenLine']='Peds.3rd.Line'
-    df.loc[df['InitialRegimenLine']=="Adult 1st line ARV regimen",'InitialRegimenLine']='Adult.1st.Line'
-    df.loc[df['InitialRegimenLine']=="Adult 2nd line ARV regimen",'InitialRegimenLine']='Adult.2nd.Line'
-    df.loc[df['InitialRegimenLine']=="Adult 3rd line ARV regimen",'InitialRegimenLine']='Adult.3rd.Line'
-    df.loc[df['InitialRegimenLine']=="Child 1st line ARV regimen",'InitialRegimenLine']='Peds.1st.Line'
-    df.loc[df['InitialRegimenLine']=="Child 2nd line ARV regimen",'InitialRegimenLine']='Peds.2nd.Line'
-    df.loc[df['InitialRegimenLine']=="Child 3rd line ARV regimen",'InitialRegimenLine']='Peds.3rd.Line'
-    
     df.loc[df['CurrentARTStatus']=="Death",'CurrentARTStatus']='Dead'
     df.loc[df['CurrentARTStatus']=="Discontinued Care",'CurrentARTStatus']='Stopped'
     df.loc[df['CurrentARTStatus']=="Transferred out",'CurrentARTStatus']='Transferred Out'
@@ -849,10 +821,8 @@ def nmrscripttoRadet2():
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].isna()) & (df["Date of Current Viral Load (yyyy-mm-dd)_baseline"].notnull())) | ((df["Date of Current Viral Load (yyyy-mm-dd)_baseline"] > df['Date of Current Viral Load (yyyy-mm-dd)']) & (df["Current Viral Load (c/ml)_baseline"].notnull())), 'CurrentViralLoad(c/ml)'] = df["Current Viral Load (c/ml)_baseline"]
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].isna()) & (df["Date of Current Viral Load (yyyy-mm-dd)_baseline"].notnull())) | (df["Date of Current Viral Load (yyyy-mm-dd)_baseline"] > df['Date of Current Viral Load (yyyy-mm-dd)']), 'Date of Current Viral Load (yyyy-mm-dd)'] = df["Date of Current Viral Load (yyyy-mm-dd)_baseline"]
     df.loc[((df['Date of Viral Load Sample Collection (yyyy-mm-dd)'].isna()) & (df["Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline"].notnull())) | (df["Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline"] > df['Date of Viral Load Sample Collection (yyyy-mm-dd)']), 'Date of Viral Load Sample Collection (yyyy-mm-dd)'] = df["Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline"]
-    df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] <= 1000)),'ViralLoadIndication']='Routine - Routine'
-    df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] > 1000)),'ViralLoadIndication']='Targeted - Post EAC'
-    #df.to_excel("test.xlsx")
-    #dfbaseline.to_excel("test2.xlsx")
+    df.to_excel("test.xlsx")
+    dfbaseline.to_excel("test2.xlsx")
     #Drop Inserted columns no longer in use
     df = df.drop(['unique identifiers','Revalidation status_baseline', 'Current Viral Load (c/ml)_baseline','Date of Current Viral Load (yyyy-mm-dd)_baseline','Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline'], axis=1)
     
