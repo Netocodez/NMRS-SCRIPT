@@ -305,8 +305,13 @@ def nmrsquery():
     df1['ReferredFor']=df1['uuid'].map(df3.set_index('uuid')['ReferredFor'])
     
     
-    df1['Biometric_date']=df1['uuid'].map(df2.set_index('uuid')['Biometric_date'])
-    df1['Biometric_Status']=df1['uuid'].map(df2.set_index('uuid')['Biometric_Status'])
+    #df1['Biometric_date']=df1['uuid'].map(df2.set_index('uuid')['Biometric_date'])
+    #df1['Biometric_Status']=df1['uuid'].map(df2.set_index('uuid')['Biometric_Status'])
+    df1['BiometricCaptured']=df1['uuid'].map(df2.set_index('uuid')['BiometricCaptured'])
+    df1['BiometricCaptureDate']=df1['uuid'].map(df2.set_index('uuid')['BiometricCaptureDate'])
+    df1['ValidCapture']=df1['uuid'].map(df2.set_index('uuid')['ValidCapture'])
+    df1['RecaptureDate']=df1['uuid'].map(df2.set_index('uuid')['RecaptureDate'])
+    df1['RecaptureCount']=df1['uuid'].map(df2.set_index('uuid')['RecaptureCount'])
     
     #df = DataFrame(db_cursor.fetchall())
     #df.columns = db_cursor.column_names
@@ -363,8 +368,13 @@ def biometrics():
     pid1.identifier as HopitalNumber,
     pid2.identifier as UniqueID,
     patient_program.date_enrolled as EnrollmentDate,
-    CAST(bi.date_created AS DATE) AS Biometric_date,
-    IF(bi.date_created IS NOT NULL, 'Yes', 'No') AS Biometric_Status
+    DATE_FORMAT(bvinfo.RecaptureDate,'%d-%b-%Y') as RecaptureDate,
+    bvinfo.recapture_count as RecaptureCount,
+    IF(biometrictable.patient_Id IS NOT NULL,'Yes','No') as BiometricCaptured,
+    IF(biometrictable.patient_Id IS NOT NULL,STR_TO_DATE(biometrictable.date_created,'%Y-%m-%d'),NULL) as BiometricCaptureDate,
+    IF(biometrictable.patient_Id IS NOT NULL,IF(invalidprint.patient_Id IS NOT NULL,'No','Yes'),"") as ValidCapture
+    /*CAST(bi.date_created AS DATE) AS Biometric_date,
+    IF(bi.date_created IS NOT NULL, 'Yes', 'No') AS Biometric_Status*/
 
 
 
@@ -372,8 +382,26 @@ def biometrics():
         LEFT JOIN Patient_identifier pid1 on(pid1.patient_id = p.patient_id and pid1.identifier_type=5 and p.voided=0 and pid1.voided=0)
         LEFT JOIN Patient_identifier pid2 on(pid2.patient_id = p.patient_id and pid2.identifier_type=4 and p.voided=0 and pid2.voided=0)
         LEFT JOIN global_property on(global_property.property='facility_datim_code')
-        LEFT JOIN biometricinfo bi ON (p.patient_id = bi.patient_id )
+        /*LEFT JOIN biometricinfo bi ON (p.patient_id = bi.patient_id )*/
         LEFT JOIN patient_program on(patient_program.patient_id=p.patient_id and patient_program.voided=0 and patient_program.program_id=1)
+        LEFT JOIN (
+        select 
+        DISTINCT biometricinfo.patient_Id,biometricinfo.date_created
+        from 
+        biometricinfo GROUP BY biometricinfo.patient_Id
+        ) as biometrictable 
+        on(p.patient_id=biometrictable.patient_Id and p.voided=0)
+        LEFT JOIN (
+        select 
+        DISTINCT biometricinfo.patient_Id
+        from 
+        biometricinfo where template not like 'Rk1S%' or CONVERT(new_template USING utf8) NOT LIKE 'Rk1S%'
+        ) as invalidprint 
+        on(p.patient_id=invalidprint.patient_Id and p.voided=0)
+        LEFT JOIN (SELECT patient_Id, MAX(date_created) AS RecaptureDate, recapture_count, count(fingerPosition) as NumberOfFingers, MIN(imageQuality) as LowestFPQuality, CEILING(AVG(imageQuality)) as AverageFPQuality, COUNT(IF(imageQuality<80, 1, NULL)) as FPLowQuality, COUNT(IF(imageQuality<80, NULL, 1)) as FPHighQuality
+        FROM biometricverificationinfo 
+        GROUP BY patient_Id) as bvinfo on(p.patient_id=bvinfo.patient_Id)
+        WHERE p.voided=0 and pid1.identifier IS NOT NULL
         
         
     GROUP BY pid1.identifier
@@ -515,6 +543,17 @@ def nmrscripttoRadet():
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] <= 1000)),'ViralLoadIndication']='Routine - Routine'
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] > 1000)),'ViralLoadIndication']='Targeted - Post EAC'
     
+    #calculate IIT Chance
+    
+    # Calculate the difference between 'IIT DATE' and today's date
+    today = pd.to_datetime('today')
+    daystoIIT = (df['IIT DATE'] - today).dt.days
+    # Apply the formula to get IIT chance as a percentage
+    df['IITChance'] = ((29 - daystoIIT) / 29)
+    # Apply IIT chance to active clients
+    df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'IIT Chance (%)']=df['IITChance']
+    df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'Date calculated (yyyy-mm-dd)']=df['IIT DATE']
+    
     
     #rearrange columns
     df = df[['S/N.',
@@ -578,14 +617,14 @@ def nmrscripttoRadet():
                 'Result of Cervical Cancer Screening',
                 'Date of Precancerous Lesions Treatment (yyyy-mm-dd)',
                 'Precancerous Lesions Treatment Methods',
-                'Biometric_date',
-                'Biometric_Status',
+                'BiometricCaptureDate',
+                'BiometricCaptured',
                 'IIT Chance (%)',
                 'Date calculated (yyyy-mm-dd)',
                 'Case Manager']]
     
     #Convert Date Objects to Date
-    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PatientOutcomeDatePreviousQuarter','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','Biometric_date','Date calculated (yyyy-mm-dd)']
+    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PatientOutcomeDatePreviousQuarter','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','BiometricCaptureDate','Date calculated (yyyy-mm-dd)']
     for col in dfDates:
         df[col] = pd.to_datetime(df[col],errors='coerce').dt.date
     
@@ -707,6 +746,12 @@ def nmrscripttoRadet():
     # Write the column headers with the defined format.
     for col_num, value in enumerate(df.columns.values):
         worksheet.write(0, col_num + 0, value, header_format)
+    
+    # Add a percent number format
+    percent_format = workbook.add_format({'num_format': '0.00%'})
+
+    # Apply the number format to the 'IIT Chance' column (3rd column, index 2)
+    worksheet.set_column('BL:BL', None, percent_format)
     
     # Close the Pandas Excel writer and output the Excel file.
     writer.close()
@@ -818,9 +863,11 @@ def nmrscripttoRadet2():
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].isna()) | (df['LastViralLoadDate'] > df['Date of Current Viral Load (yyyy-mm-dd)'])),'Date of Current Viral Load (yyyy-mm-dd)']=df['LastViralLoadDate']
 
     #remove leading zeros from dfbaseline hosital number
-    df['PatientHospitalNo1'] = df['PatientHospitalNo'].str.lstrip('0')
+    #df['PatientHospitalNo1'] = df['PatientHospitalNo'].str.lstrip('0')
+    df['PatientHospitalNo1'] = df['PatientHospitalNo'].apply(lambda x: x.lstrip('0') if x.isdigit() else x)
+    df['PatientUniqueID1'] = df['PatientUniqueID'].apply(lambda x: x.lstrip('0') if x.isdigit() else x)
     dfbaseline['unique identifiers'] = dfbaseline["LGA"].astype(str) + dfbaseline["Facility"].astype(str) + dfbaseline["Hospital Number"].astype(str) + dfbaseline["Unique ID"].astype(str)
-    df['unique identifiers'] = df["LGA"].astype(str) + df['FaciityName'].astype(str) + df["PatientHospitalNo1"].astype(str) + df["PatientUniqueID"].astype(str)
+    df['unique identifiers'] = df["LGA"].astype(str) + df['FaciityName'].astype(str) + df["PatientHospitalNo1"].astype(str) + df["PatientUniqueID1"].astype(str)
     
     #remove duplicates
     dfbaseline = dfbaseline.drop_duplicates(subset=['unique identifiers'], keep=False)
@@ -841,9 +888,25 @@ def nmrscripttoRadet2():
     df['Date of Current Viral Load (yyyy-mm-dd)_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Date of Current Viral Load (yyyy-mm-dd)'])
     df['Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Date of Viral Load Sample Collection (yyyy-mm-dd)'])
     df['Case Manager_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Case Manager'])
-    df['Patient id']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Patient ID'])
-    df['Case Manager'] = df['Case Manager_baseline']
     
+    df['ART Enrollment Setting_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['ART Enrollment Setting'])
+    df['Date Commenced DMOC (yyyy-mm-dd)_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Date Commenced DMOC (yyyy-mm-dd)'])
+    df['Type of DMOC_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Type of DMOC'])
+    df['Date of Return of DMOC Client to Facility (yyyy-mm-dd)_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Date of Return of DMOC Client to Facility (yyyy-mm-dd)'])
+    df['Date of TPT Start (yyyy-mm-dd)_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Date of TPT Start (yyyy-mm-dd)'])
+    df['TPT Type_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['TPT Type'])
+    df['TPT Completion date (yyyy-mm-dd)_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['TPT Completion date (yyyy-mm-dd)'])
+    df['Patient id']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Patient ID'])
+    
+    #Assign columns from baseline Radet to converted Radet
+    df['Case Manager'] = df['Case Manager_baseline']
+    df['ART Enrollment Setting']=df['ART Enrollment Setting_baseline']
+    df['Date Commenced DMOC (yyyy-mm-dd)']=df['Date Commenced DMOC (yyyy-mm-dd)_baseline']
+    df['Type of DMOC']=df['Type of DMOC_baseline']
+    df['Date of Return of DMOC Client to Facility (yyyy-mm-dd)']=df['Date of Return of DMOC Client to Facility (yyyy-mm-dd)_baseline']
+    df['TPT Type']=df['TPT Type_baseline']
+    df['TPT Completion date (yyyy-mm-dd)']=df['TPT Completion date (yyyy-mm-dd)_baseline']
+        
     #compare and update more recent data from baseline RADET to NMRS if seen
     df.loc[(df['CurrentARTStatus'] == 'LTFU') & (df['Revalidation status_baseline'] == 'Active'), 'CurrentARTStatus'] = "Active(A)"
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].isna()) & (df["Date of Current Viral Load (yyyy-mm-dd)_baseline"].notnull())) | ((df["Date of Current Viral Load (yyyy-mm-dd)_baseline"] > df['Date of Current Viral Load (yyyy-mm-dd)']) & (df["Current Viral Load (c/ml)_baseline"].notnull())), 'CurrentViralLoad(c/ml)'] = df["Current Viral Load (c/ml)_baseline"]
@@ -851,10 +914,23 @@ def nmrscripttoRadet2():
     df.loc[((df['Date of Viral Load Sample Collection (yyyy-mm-dd)'].isna()) & (df["Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline"].notnull())) | (df["Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline"] > df['Date of Viral Load Sample Collection (yyyy-mm-dd)']), 'Date of Viral Load Sample Collection (yyyy-mm-dd)'] = df["Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline"]
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] <= 1000)),'ViralLoadIndication']='Routine - Routine'
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].notnull()) & (df['CurrentViralLoad(c/ml)'] > 1000)),'ViralLoadIndication']='Targeted - Post EAC'
+    df.loc[((df['LastINHDispensedDate'].isna()) & (df["Date of TPT Start (yyyy-mm-dd)_baseline"].notnull())) | (df["Date of TPT Start (yyyy-mm-dd)_baseline"] > df['LastINHDispensedDate']), 'LastINHDispensedDate'] = df["Date of TPT Start (yyyy-mm-dd)_baseline"]
     #df.to_excel("test.xlsx")
     #dfbaseline.to_excel("test2.xlsx")
+    
     #Drop Inserted columns no longer in use
     df = df.drop(['unique identifiers','Revalidation status_baseline', 'Current Viral Load (c/ml)_baseline','Date of Current Viral Load (yyyy-mm-dd)_baseline','Date of Viral Load Sample Collection (yyyy-mm-dd)_baseline'], axis=1)
+    
+    #calculate IIT Chance
+    # Calculate the difference between 'IIT DATE' and today's date
+    today = pd.to_datetime('today')
+    daystoIIT = (df['IIT DATE'] - today).dt.days
+    # Apply the formula to get IIT chance as a percentage
+    df['IITChance'] = ((29 - daystoIIT) / 29)
+    # Apply IIT chance to active clients
+    df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'IIT Chance (%)']=df['IITChance']
+    df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'Date calculated (yyyy-mm-dd)']=df['IIT DATE']
+
     
     
     #rearrange columns
@@ -919,14 +995,14 @@ def nmrscripttoRadet2():
                 'Result of Cervical Cancer Screening',
                 'Date of Precancerous Lesions Treatment (yyyy-mm-dd)',
                 'Precancerous Lesions Treatment Methods',
-                'Biometric_date',
-                'Biometric_Status',
+                'BiometricCaptureDate',
+                'BiometricCaptured',
                 'IIT Chance (%)',
                 'Date calculated (yyyy-mm-dd)',
                 'Case Manager']]
     
     #Convert Date Objects to Date
-    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PatientOutcomeDatePreviousQuarter','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','Biometric_date','Date calculated (yyyy-mm-dd)']
+    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PatientOutcomeDatePreviousQuarter','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','BiometricCaptureDate','Date calculated (yyyy-mm-dd)']
     for col in dfDates:
         df[col] = pd.to_datetime(df[col],errors='coerce').dt.date
     
@@ -1048,6 +1124,12 @@ def nmrscripttoRadet2():
     # Write the column headers with the defined format.
     for col_num, value in enumerate(df.columns.values):
         worksheet.write(0, col_num + 0, value, header_format)
+        
+    # Add a percent number format
+    percent_format = workbook.add_format({'num_format': '0.00%'})
+
+    # Apply the number format to the 'IIT Chance' column (3rd column, index 2)
+    worksheet.set_column('BL:BL', None, percent_format)
     
     # Close the Pandas Excel writer and output the Excel file.
     writer.close()
@@ -1150,7 +1232,7 @@ radet_export_button.pack(pady=0.5)
 tooltip = CreateToolTip(radet_export_button, "PEASE ONLY CLICK THIS BUTTON WHEN YOU HAVE SAVED THE FILE \n YOU GENERATED USING (CONNECT & GENERATE LINE LIST button) as it will be required \n you will only be required to select the file you just exported \n This option will not require baseline RADET and no data from baseline RADET will be updated")
 radet_export2_button = tk.Button(root, text="Exported file to Radet with baseline info", command=nmrscripttoRadet2)
 radet_export2_button.pack(pady=0.5)
-tooltip = CreateToolTip(radet_export2_button, "PEASE ONLY CLICK THIS BUTTON WHEN YOU HAVE SAVED THE FILE \n YOU GENERATED USING (CONNECT & GENERATE LINE LIST button) as it will be required \n you will be required to first select: \n Baseline radet file and then the file you just exported \n This will compare baseline Radet with makeshift line list and update latest: \n Patient ID, VL results, VL SC, CAS, Date of CAS, and CMG Info")
+tooltip = CreateToolTip(radet_export2_button, "PEASE ONLY CLICK THIS BUTTON WHEN YOU HAVE SAVED THE FILE \n YOU GENERATED USING (CONNECT & GENERATE LINE LIST button) as it will be required \n you will be required to first select: \n Baseline radet file and then the file you just exported \n This will compare baseline Radet with makeshift line list and update where necessary the latest: \n Patient ID, VL results, VL SC, CAS, Date of CAS, ART Enrollment setting, TPT Data, DMOC data and CMG Info")
 convert_button1 = tk.Button(root, text="EXIT APPLICATION", command=root.destroy, font=("Helvetica", 14), bg="red", fg="#ffffff")
 convert_button1.pack(pady=10)
 
