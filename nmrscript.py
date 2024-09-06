@@ -7,7 +7,7 @@ from tkcalendar import DateEntry
 import mysql.connector as sql
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, date
 import string
 
 db_connection = sql.connect(
@@ -59,6 +59,21 @@ def get_selected_date():
 #startDate = datetime(2000, 1, 1)
 #endDate = datetime(2024, 6, 30)
 
+def get_end_of_last_quarter(input_date):
+    year = input_date.year
+    quarter = (input_date.month - 1) // 3 + 1
+
+    if quarter == 1:
+        end_of_last_quarter = datetime(year - 1, 12, 31)
+    elif quarter == 2:
+        end_of_last_quarter = datetime(year, 3, 31)
+    elif quarter == 3:
+        end_of_last_quarter = datetime(year, 6, 30)
+    else:
+        end_of_last_quarter = datetime(year, 9, 30)
+
+    return end_of_last_quarter.date()
+
 
 def get_days_of_arv_refill(obsid, cid, pid):
     # Establish a connection to your MariaDB server
@@ -100,6 +115,27 @@ db_cursor.execute("""
         RETURN value_num;
     END;
 """)
+
+db_cursor.execute("""
+drop function if exists GetEndOfLastQuarter;
+""")
+db_cursor.execute("""
+CREATE FUNCTION GetEndOfLastQuarter(input_date DATE)
+RETURNS DATE
+BEGIN
+    DECLARE end_of_last_quarter DATE;
+    
+    SET end_of_last_quarter = CASE 
+        WHEN QUARTER(input_date) = 1 THEN MAKEDATE(YEAR(input_date) - 1, 1) + INTERVAL 4 QUARTER - INTERVAL 1 DAY
+        WHEN QUARTER(input_date) = 2 THEN MAKEDATE(YEAR(input_date), 1) + INTERVAL 1 QUARTER - INTERVAL 1 DAY
+        WHEN QUARTER(input_date) = 3 THEN MAKEDATE(YEAR(input_date), 1) + INTERVAL 2 QUARTER - INTERVAL 1 DAY
+        ELSE MAKEDATE(YEAR(input_date), 1) + INTERVAL 3 QUARTER - INTERVAL 1 DAY
+    END;
+    
+    RETURN end_of_last_quarter;
+END
+""" )
+
 #init
 def nmrsquery():
     start_time = time.time()  # Start time measurement
@@ -148,24 +184,6 @@ def nmrsquery():
     TIMESTAMPDIFF(YEAR,pe.birthdate,'{endDate}') as Age,
     MAX(IF(obs.concept_id=159599,IF(TIMESTAMPDIFF(YEAR,pe.birthdate,obs.value_datetime)>=5,TIMESTAMPDIFF(YEAR,pe.birthdate,obs.value_datetime),@ageAtStart:=0),null)) as  `AgeAtStartOfARTYears`,
     MAX(IF(obs.concept_id=159599,IF(TIMESTAMPDIFF(YEAR,pe.birthdate,obs.value_datetime)<5,TIMESTAMPDIFF(MONTH,pe.birthdate,obs.value_datetime),null),null)) as `AgeAtStartOfARTMonths`,
-    CASE obs.concept_id = 165839
-            WHEN obs.value_coded = 160529 THEN 'VCT'
-            WHEN obs.value_coded = 160546 THEN 'STI'
-            WHEN obs.value_coded = 5271 THEN 'FP'
-            WHEN obs.value_coded = 160542 THEN 'OPD'
-            WHEN obs.value_coded = 161629 THEN 'Ward'
-            WHEN obs.value_coded = 5622 THEN 'Other'
-            WHEN obs.value_coded = 165788 THEN 'Blood Bank'
-            WHEN obs.value_coded = 160545 THEN 'Outreach'
-            WHEN obs.value_coded = 165838 THEN 'Standalone HTS'
-            WHEN obs.value_coded = 160539 THEN 'TB'
-            WHEN obs.value_coded = 166026 THEN 'ANC'
-            WHEN obs.value_coded = 166027 THEN 'L&D'
-            WHEN obs.value_coded = 166028 THEN 'POSTnatal'
-            WHEN obs.value_coded = 165512 THEN 'PMTCT'
-        ELSE NULL 
-    END AS setting,
-    MAX(IF(obs.concept_id=160540,cn1.name,null)) as CareEntryPoint,
     MAX(IF(obs.concept_id=160554,obs.value_datetime, NULL)) as  `HIVConfirmedDate`,
     MAX(IF(obs.concept_id=160534,DATE_FORMAT(obs.value_datetime,'%d-%b-%Y'),null)) as DateTransferredIn,
     MAX(IF(obs.concept_id=165242,cn1.name,null)) as TransferInStatus,
@@ -173,6 +191,69 @@ def nmrsquery():
     MAX(IF((obs.concept_id=165708 and enc.form_id=27 AND obs.voided =0),container.last_date,null)) as `LastPickupDate`,
     MAX(IF(obs.concept_id=165708 AND obs.`obs_datetime` <= '{endDate}',DATE_FORMAT(container.last_date, '%d-%b-%Y'), NULL)) AS `LastVisitDate`,
     getconceptval(MAX(IF(obs.concept_id=162240,obs.obs_id,null) ),159368,p.patient_id) AS `DaysOfARVRefil`,
+    
+    (
+        SELECT MAX(obs.obs_datetime)
+        FROM obs
+        JOIN encounter enc ON obs.encounter_id = enc.encounter_id
+        WHERE obs.person_id = p.patient_id
+        AND obs.concept_id = 165708
+        AND enc.form_id = 27
+        AND obs.voided = 0
+        AND obs.obs_datetime < (
+            SELECT obs.obs_datetime
+            FROM obs
+            JOIN encounter enc ON obs.encounter_id = enc.encounter_id
+            WHERE obs.person_id = p.patient_id
+            AND obs.concept_id = 165708
+            AND enc.form_id = 27
+            AND obs.voided = 0
+            AND obs.obs_datetime <= '{endDate}'
+            ORDER BY obs.obs_datetime DESC
+            LIMIT 1 OFFSET 0
+        )
+    ) AS `PreviousLastPickupDate`,
+    (
+        SELECT getconceptval(MAX(IF(obs.concept_id=162240, obs.obs_id, NULL)), 159368, p.patient_id)
+        FROM obs
+        WHERE obs.person_id = p.patient_id
+        AND obs.obs_datetime < (
+            SELECT obs.obs_datetime
+            FROM obs
+            JOIN encounter enc ON obs.encounter_id = enc.encounter_id
+            WHERE obs.person_id = p.patient_id
+            AND obs.concept_id = 165708
+            AND enc.form_id = 27
+            AND obs.voided = 0
+            AND obs.obs_datetime <= '{endDate}'
+            ORDER BY obs.obs_datetime DESC
+            LIMIT 1 OFFSET 0
+        )
+    ) AS `PreviousDaysOfARVRefil`,
+    (
+    SELECT MAX(obs.obs_datetime)
+    FROM obs
+    JOIN encounter enc ON obs.encounter_id = enc.encounter_id
+    WHERE obs.person_id = p.patient_id
+    AND obs.concept_id = 165708
+    AND enc.form_id = 27
+    AND obs.voided = 0
+    AND obs.obs_datetime <= '{get_end_of_last_quarter(endDate)}'
+    ) AS `LastPickupDatePreviousQuarter`,
+    (
+    SELECT getconceptval(
+        MAX(obs.obs_id),
+        159368,
+        p.patient_id
+    )
+    FROM obs
+    JOIN encounter enc ON obs.encounter_id = enc.encounter_id
+    WHERE obs.person_id = p.patient_id
+    AND obs.concept_id = 162240
+    AND enc.form_id = 27
+    AND obs.voided = 0
+    AND obs.obs_datetime <= '{get_end_of_last_quarter(endDate)}'
+    ) AS `DrugDurationPreviousQuarter`,
     MAX(IF(obs2.concept_id=165708,cn2.name,NULL)) AS `InitialRegimenLine`,
     MAX(
     IF(obs2.concept_id=164506,cn2.`name`,
@@ -288,6 +369,9 @@ def nmrsquery():
 
     df1 = pd.DataFrame(table_rows, columns=db_cursor.column_names)
     
+    df4 = entrypoint()
+    df1['CareEntryPoint']=df1['uuid'].map(df4.set_index('uuid')['CareEntryPoint'])    
+    
     df3 = tracking()
     df1['EnrollmentDate']=df1['uuid'].map(df2.set_index('uuid')['EnrollmentDate'])
     df1['MarkAsDeseased']=df1['uuid'].map(df3.set_index('uuid')['MarkAsDeseased'])
@@ -296,6 +380,8 @@ def nmrsquery():
     df1['EnteredBy']=df1['uuid'].map(df3.set_index('uuid')['EnteredBy'])
     df1['DateCreated']=df1['uuid'].map(df3.set_index('uuid')['DateCreated'])
     df1['ReasonForTracking']=df1['uuid'].map(df3.set_index('uuid')['ReasonForTracking'])
+    df1['PatientOutcomePreviousQuarter']=df1['uuid'].map(df3.set_index('uuid')['PatientOutcomePreviousQuarter'])
+    df1['PatientOutcomeDatePreviousQuarter']=df1['uuid'].map(df3.set_index('uuid')['PatientOutcomeDatePreviousQuarter'])
     df1['PatientOutcome']=df1['uuid'].map(df3.set_index('uuid')['ReasonForTermination'])
     df1['PatientOutcomeDate']=df1['uuid'].map(df3.set_index('uuid')['DateOfTermination'])
     df1['CauseOfDeath']=df1['uuid'].map(df3.set_index('uuid')['CauseOfDeath'])
@@ -303,6 +389,33 @@ def nmrsquery():
     df1['DiscontinuedCareReason']=df1['uuid'].map(df3.set_index('uuid')['DiscontinuedCareReason'])
     df1['DateReturnedToCare']=df1['uuid'].map(df3.set_index('uuid')['DateReturnedToCare'])
     df1['ReferredFor']=df1['uuid'].map(df3.set_index('uuid')['ReferredFor'])
+    
+    #Prev quarter active clients validation
+    df1['IIT DATE PREV QUARTER'] = pd.to_datetime(df1['LastPickupDatePreviousQuarter']) + pd.to_timedelta(pd.to_numeric(df1['DrugDurationPreviousQuarter']), unit='D') + pd.Timedelta(days=29)
+    df1['IIT DATE PREV QUARTER'] = df1['IIT DATE PREV QUARTER'].dt.date
+    df1['Revalidation status prev quarter'] = np.where((df1['IIT DATE PREV QUARTER'] >= get_end_of_last_quarter(endDate)) &
+        ~df1['PatientOutcomePreviousQuarter'].isin(["Discontinued Care", "Death", "Transferred out", ""]),"Active","LTFU"
+    )
+    
+    #ARTStatusPreviousQuarter column creation
+    df1['ARTStatusPreviousQuarter'] = df1['PatientOutcomePreviousQuarter']
+    df1.loc[(df1['ARTStatusPreviousQuarter'].isna()) & (df1['LastPickupDatePreviousQuarter'].notnull()),'ARTStatusPreviousQuarter']=df1['Revalidation status prev quarter']
+    
+    #Current Quarter RTC calculation
+    df1['PreviousIITDate'] = pd.to_datetime(df1['PreviousLastPickupDate']) + pd.to_timedelta(pd.to_numeric(df1['PreviousDaysOfARVRefil']), unit='D') + pd.Timedelta(days=29)
+    df1['PreviousIITDate'] = df1['PreviousIITDate'].dt.date
+    df1['RTC']=''
+    df1.loc[(df1['PreviousLastPickupDate'].notnull()) & (df1['LastPickupDate'].notnull()) & (df1['LastPickupDate'] > df1['PreviousIITDate']) & (df1['CurrentARTStatus'] == 'Active'),'RTC']=df1['LastPickupDate']
+    df1.loc[(df1['DateReturnedToCare'].isna()),'DateReturnedToCare']=df1['RTC']
+    
+    #Previous revalidation status
+    df1['PreviousIITDate'] = pd.to_datetime(df1['PreviousIITDate'])
+    df1['Previousrevalidation'] = np.where((df1['PreviousIITDate'] >= df1['LastPickupDate']) &
+        ~df1['PatientOutcomePreviousQuarter'].isin(["Discontinued Care", "Death", "Transferred out", ""]),"Active","LTFU"
+    )
+    
+    #drop columns
+    df1 = df1.drop(['IIT DATE PREV QUARTER','Revalidation status prev quarter', 'PreviousLastPickupDate', 'PreviousDaysOfARVRefil', 'PreviousIITDate', 'RTC'], axis=1)
     
     
     #df1['Biometric_date']=df1['uuid'].map(df2.set_index('uuid')['Biometric_date'])
@@ -425,6 +538,8 @@ def tracking():
     CONCAT(prs1.given_name,' ',prs1.family_name) as EnteredBy,
     encounter.date_created as DateCreated,
     MAX(IF(obs.concept_id=165460, cn1.name, NULL)) as  `ReasonForTracking`
+    ,MAX(IF(obs.concept_id=165470 AND obs.obs_datetime <= GetEndOfLastQuarter('{endDate}'), cn1.name, NULL)) as  `PatientOutcomePreviousQuarter`
+    ,MAX(IF(obs.concept_id=165469 AND obs.obs_datetime <= GetEndOfLastQuarter('{endDate}'), obs.obs_datetime, NULL)) as `PatientOutcomeDatePreviousQuarter`
     ,MAX(IF(obs.concept_id=165469, obs.value_datetime, NULL)) as  `DateOfTermination`
     ,MAX(IF(obs.concept_id=165470, cn1.name, NULL)) as  `ReasonForTermination`
     ,MAX(IF(obs.concept_id=165889, cn1.name, NULL)) as  `CauseOfDeath`
@@ -448,10 +563,34 @@ def tracking():
     """)
     table_rows = db_cursor.fetchall()
     df3 = pd.DataFrame(table_rows, columns=db_cursor.column_names)
+    #df3.to_excel("tracking.xlsx")
     return df3
 
 
+def entrypoint():
+    db_cursor.execute(f"""
+        Select
+        pid1.uuid,
+        pid1.identifier as PatientHospitalNo,
+        pid2.identifier as PatientUniqueID,
+        MAX(IF(obs.concept_id=160540,cn1.name,null)) as CareEntryPoint
+    from patient p
+        LEFT JOIN Patient_identifier pid1 on(pid1.patient_id = p.patient_id and pid1.identifier_type=5 and p.voided=0 and pid1.voided=0)
+        LEFT JOIN Patient_identifier pid2 on(pid2.patient_id = p.patient_id and pid2.identifier_type=4 and p.voided=0 and pid2.voided=0)
+        INNER JOIN obs on(obs.person_id=p.patient_id and obs.voided=0)
+        left join concept_name cn1 on(obs.value_coded=cn1.concept_id and cn1.locale='en' and cn1.locale_preferred=1)
+    GROUP BY pid1.identifier
+    """)
+    table_rows = db_cursor.fetchall()
+    df4 = pd.DataFrame(table_rows, columns=db_cursor.column_names)
+    #df3.to_excel("tracking.xlsx")
+    return df4
+
+
 def nmrscripttoRadet():
+    global end_date
+    if end_date is None:
+        end_date = datetime.today().date()
     #start_time = time.time()  # Start time measurement
     #status_label.config(text=f"Attempting to read file...")
     start_time = time.time()  # Start time measurement
@@ -514,6 +653,19 @@ def nmrscripttoRadet():
     df['Date of Viral Load Sample Collection (yyyy-mm-dd)'] = df['LastDateOfSampleCollection']
     df.loc[(df['CurrentARTStatus'] == 'LTFU') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['IIT DATE']
     df.loc[(df['CurrentARTStatus'] == 'Active') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['LastPickupDate']
+    
+    #previous quarter art status update
+    #df['IIT DATE PREV QUARTER'] = df['LastPickupDatePreviousQuarter'] + pd.to_timedelta(pd.to_numeric(df['DrugDurationPreviousQuarter']), unit='D') + pd.Timedelta(days=29)
+    mask = df['LastPickupDatePreviousQuarter'].notna() # Create a mask for non-empty rows
+    # Perform the arithmetic operation only on non-empty rows
+    df.loc[mask, 'IIT DATE PREV QUARTER'] = df.loc[mask, 'LastPickupDatePreviousQuarter'] + pd.to_timedelta(pd.to_numeric(df.loc[mask, 'DrugDurationPreviousQuarter']), unit='D') + pd.Timedelta(days=29)
+    df.loc[(df['ARTStatusPreviousQuarter'] == 'LTFU') & (df['PatientOutcomeDatePreviousQuarter'].isna()), 'PatientOutcomeDatePreviousQuarter'] = df['IIT DATE PREV QUARTER']
+    df.loc[(df['ARTStatusPreviousQuarter'] == 'Active') & (df['PatientOutcomeDatePreviousQuarter'].isna()), 'PatientOutcomeDatePreviousQuarter'] = df['LastPickupDatePreviousQuarter']
+    df.loc[df['ARTStatusPreviousQuarter']=="Death",'ARTStatusPreviousQuarter']='Dead'
+    df.loc[df['ARTStatusPreviousQuarter']=="Discontinued Care",'ARTStatusPreviousQuarter']='Stopped'
+    df.loc[df['ARTStatusPreviousQuarter']=="Transferred out",'ARTStatusPreviousQuarter']='Transferred Out'
+    df.loc[df['ARTStatusPreviousQuarter']=="LTFU",'ARTStatusPreviousQuarter']='IIT'
+    
     df.loc[df['CurrentRegimenLine']=="Adult 1st line ARV regimen",'CurrentRegimenLine']='Adult.1st.Line'
     df.loc[df['CurrentRegimenLine']=="Adult 2nd line ARV regimen",'CurrentRegimenLine']='Adult.2nd.Line'
     df.loc[df['CurrentRegimenLine']=="Adult 3rd line ARV regimen",'CurrentRegimenLine']='Adult.3rd.Line'
@@ -535,8 +687,8 @@ def nmrscripttoRadet():
     #df.loc[df['CurrentARTStatusWithPillBalance']=="Discontinued Care",'CurrentARTStatusWithPillBalance']='Stopped'
     #df.loc[df['CurrentARTStatusWithPillBalance']=="Transferred out",'CurrentARTStatusWithPillBalance']='Transferred Out'
     #df.loc[df['CurrentARTStatusWithPillBalance']=="InActive",'CurrentARTStatusWithPillBalance']='IIT'
-    df['ARTStatusPreviousQuarter'] = ""
-    df['PatientOutcomeDatePreviousQuarter'] = ''
+    #df['ARTStatusPreviousQuarter'] = ""
+    #df['PatientOutcomeDatePreviousQuarter'] = ''
     df['Date of Current Viral Load (yyyy-mm-dd)']=pd.to_datetime(df['ViralLoadReportedDate'],errors='coerce')
     df['LastViralLoadDate']=pd.to_datetime(df['LastViralLoadDate'],errors='coerce')
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].isna()) | (df['LastViralLoadDate'] > df['Date of Current Viral Load (yyyy-mm-dd)'])),'Date of Current Viral Load (yyyy-mm-dd)']=df['LastViralLoadDate']
@@ -546,13 +698,19 @@ def nmrscripttoRadet():
     #calculate IIT Chance
     
     # Calculate the difference between 'IIT DATE' and today's date
-    today = pd.to_datetime('today')
-    daystoIIT = (df['IIT DATE'] - today).dt.days
+    #today = pd.to_datetime('today')
+    daystoIIT = (df['IIT DATE'] - pd.to_datetime(end_date)).dt.days
     # Apply the formula to get IIT chance as a percentage
     df['IITChance'] = ((29 - daystoIIT) / 29)
     # Apply IIT chance to active clients
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'IIT Chance (%)']=df['IITChance']
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'Date calculated (yyyy-mm-dd)']=df['IIT DATE']
+    
+    #Add restarts, transfer-in and status at registration to Radet
+    df.loc[(df['DateReturnedToCare'].notnull()) & (df['CurrentARTStatus']== "Active"),'CurrentARTStatus']='Active-Restart'
+    df.loc[(df['DateReturnedToCare'].notnull()) & ((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus'] == "Active-Restart")),'PatientOutcomeDate']=df['DateReturnedToCare']
+    df.loc[(df['TransferInStatus'] == 'Transfer in with records') & ((df['CurrentARTStatus']== "Active")),'CurrentARTStatus']='Active-Transfer In'
+    df.loc[(df['Status at Registration']=='') & (df['TransferInStatus'] == 'Transfer in with records'),'Status at Registration']='ART Transfer In'
     
     
     #rearrange columns
@@ -835,6 +993,17 @@ def nmrscripttoRadet2():
     df['Date of Viral Load Sample Collection (yyyy-mm-dd)'] = df['LastDateOfSampleCollection']
     df.loc[(df['CurrentARTStatus'] == 'LTFU') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['IIT DATE']
     df.loc[(df['CurrentARTStatus'] == 'Active') & (df['PatientOutcomeDate'].isna()), 'PatientOutcomeDate'] = df['LastPickupDate']
+    
+    mask = df['LastPickupDatePreviousQuarter'].notna() # Create a mask for non-empty rows
+    # Perform the arithmetic operation only on non-empty rows
+    df.loc[mask, 'IIT DATE PREV QUARTER'] = df.loc[mask, 'LastPickupDatePreviousQuarter'] + pd.to_timedelta(pd.to_numeric(df.loc[mask, 'DrugDurationPreviousQuarter']), unit='D') + pd.Timedelta(days=29)
+    df.loc[(df['ARTStatusPreviousQuarter'] == 'LTFU') & (df['PatientOutcomeDatePreviousQuarter'].isna()), 'PatientOutcomeDatePreviousQuarter'] = df['IIT DATE PREV QUARTER']
+    df.loc[(df['ARTStatusPreviousQuarter'] == 'Active') & (df['PatientOutcomeDatePreviousQuarter'].isna()), 'PatientOutcomeDatePreviousQuarter'] = df['LastPickupDatePreviousQuarter']
+    df.loc[df['ARTStatusPreviousQuarter']=="Death",'ARTStatusPreviousQuarter']='Dead'
+    df.loc[df['ARTStatusPreviousQuarter']=="Discontinued Care",'ARTStatusPreviousQuarter']='Stopped'
+    df.loc[df['ARTStatusPreviousQuarter']=="Transferred out",'ARTStatusPreviousQuarter']='Transferred Out'
+    df.loc[df['ARTStatusPreviousQuarter']=="LTFU",'ARTStatusPreviousQuarter']='IIT'
+    
     df.loc[df['CurrentRegimenLine']=="Adult 1st line ARV regimen",'CurrentRegimenLine']='Adult.1st.Line'
     df.loc[df['CurrentRegimenLine']=="Adult 2nd line ARV regimen",'CurrentRegimenLine']='Adult.2nd.Line'
     df.loc[df['CurrentRegimenLine']=="Adult 3rd line ARV regimen",'CurrentRegimenLine']='Adult.3rd.Line'
@@ -856,16 +1025,19 @@ def nmrscripttoRadet2():
     #df.loc[df['CurrentARTStatusWithPillBalance']=="Discontinued Care",'CurrentARTStatusWithPillBalance']='Stopped'
     #df.loc[df['CurrentARTStatusWithPillBalance']=="Transferred out",'CurrentARTStatusWithPillBalance']='Transferred Out'
     #df.loc[df['CurrentARTStatusWithPillBalance']=="InActive",'CurrentARTStatusWithPillBalance']='IIT'
-    df['ARTStatusPreviousQuarter'] = ""
-    df['PatientOutcomeDatePreviousQuarter'] = ''
+    #df['ARTStatusPreviousQuarter'] = ""
+    #df['PatientOutcomeDatePreviousQuarter'] = ''
     df['Date of Current Viral Load (yyyy-mm-dd)']=pd.to_datetime(df['ViralLoadReportedDate'],errors='coerce')
     df['LastViralLoadDate']=pd.to_datetime(df['LastViralLoadDate'],errors='coerce')
     df.loc[((df['Date of Current Viral Load (yyyy-mm-dd)'].isna()) | (df['LastViralLoadDate'] > df['Date of Current Viral Load (yyyy-mm-dd)'])),'Date of Current Viral Load (yyyy-mm-dd)']=df['LastViralLoadDate']
 
     #remove leading zeros from dfbaseline hosital number
     #df['PatientHospitalNo1'] = df['PatientHospitalNo'].str.lstrip('0')
-    df['PatientHospitalNo1'] = df['PatientHospitalNo'].apply(lambda x: x.lstrip('0') if x.isdigit() else x)
-    df['PatientUniqueID1'] = df['PatientUniqueID'].apply(lambda x: x.lstrip('0') if x.isdigit() else x)
+    #df['PatientHospitalNo1'] = df['PatientHospitalNo'].apply(lambda x: x.lstrip('0') if x.isdigit() else x)
+    #df['PatientUniqueID1'] = df['PatientUniqueID'].apply(lambda x: x.lstrip('0') if x.isdigit() else x)
+    df['PatientHospitalNo1'] = df['PatientHospitalNo'].apply(lambda x: str(x).lstrip('0') if str(x).isdigit() else x)
+    df['PatientUniqueID1'] = df['PatientUniqueID'].apply(lambda x: str(x).lstrip('0') if str(x).isdigit() else x)
+
     dfbaseline['unique identifiers'] = dfbaseline["LGA"].astype(str) + dfbaseline["Facility"].astype(str) + dfbaseline["Hospital Number"].astype(str) + dfbaseline["Unique ID"].astype(str)
     df['unique identifiers'] = df["LGA"].astype(str) + df['FaciityName'].astype(str) + df["PatientHospitalNo1"].astype(str) + df["PatientUniqueID1"].astype(str)
     
@@ -878,7 +1050,7 @@ def nmrscripttoRadet2():
     #Check active clients in baseline Radet
     refill_days = np.where(dfbaseline['Months of ARV Refill'] == "", 15, dfbaseline['Months of ARV Refill'] * 30)
     dfbaseline['IIT DATE_baseline'] = pd.to_datetime(dfbaseline['Last Pickup Date (yyyy-mm-dd)']) + pd.to_timedelta(refill_days, unit='D') + pd.Timedelta(days=29)
-    dfbaseline['Revalidation status_baseline'] = np.where((dfbaseline['IIT DATE_baseline'] >= pd.to_datetime('today')) &
+    dfbaseline['Revalidation status_baseline'] = np.where((dfbaseline['IIT DATE_baseline'] >= pd.to_datetime(end_date)) &
         ~dfbaseline['Current ART Status'].isin(["Dead", "Stopped", "Transferred Out", ""]),"Active","Inactive"
     )
 
@@ -897,6 +1069,7 @@ def nmrscripttoRadet2():
     df['TPT Type_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['TPT Type'])
     df['TPT Completion date (yyyy-mm-dd)_baseline']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['TPT Completion date (yyyy-mm-dd)'])
     df['Patient id']=df['unique identifiers'].map(dfbaseline.set_index('unique identifiers')['Patient ID'])
+    #df['Patient id'] = df['Patient id'].fillna(df['unique identifiers'])
     
     #Assign columns from baseline Radet to converted Radet
     df['Case Manager'] = df['Case Manager_baseline']
@@ -923,13 +1096,19 @@ def nmrscripttoRadet2():
     
     #calculate IIT Chance
     # Calculate the difference between 'IIT DATE' and today's date
-    today = pd.to_datetime('today')
-    daystoIIT = (df['IIT DATE'] - today).dt.days
+    #today = pd.to_datetime('today')
+    daystoIIT = (df['IIT DATE'] - pd.to_datetime(end_date)).dt.days
     # Apply the formula to get IIT chance as a percentage
     df['IITChance'] = ((29 - daystoIIT) / 29)
     # Apply IIT chance to active clients
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'IIT Chance (%)']=df['IITChance']
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'Date calculated (yyyy-mm-dd)']=df['IIT DATE']
+    
+    #Add restarts and transfer in and status at registration to Radet
+    df.loc[(df['DateReturnedToCare'].notnull()) & ((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")),'CurrentARTStatus']='Active-Restart'
+    df.loc[(df['DateReturnedToCare'].notnull()) & ((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus'] == "Active-Restart") | (df['CurrentARTStatus']== "Active(A)")),'PatientOutcomeDate']=df['DateReturnedToCare']
+    df.loc[(df['TransferInStatus'] == 'Transfer in with records') & ((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")),'CurrentARTStatus']='Active-Transfer In'
+    df.loc[(df['Status at Registration']=='') & (df['TransferInStatus'] == 'Transfer in with records'),'Status at Registration']='ART Transfer In'
 
     
     
@@ -1188,7 +1367,7 @@ def CreateToolTip(widget, text):
     
 # Creating Main Window
 root = tk.Tk()
-root.title("NETO's NMRS STATE MAKESHIFT GENERATOR V002")
+root.title("NETO's NMRS STATE MAKESHIFT GENERATOR v3")
 root.geometry("650x520")
 root.config(bg="#f0f0f0")
 
