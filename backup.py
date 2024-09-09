@@ -414,17 +414,8 @@ def nmrsquery():
         ~df1['PatientOutcomePreviousQuarter'].isin(["Discontinued Care", "Death", "Transferred out", ""]),"Active","LTFU"
     )
     
-    #previous ART status calculation
-    df1['PreviousARTStatus'] = df1['PatientOutcomePreviousQuarter']
-    df1.loc[(df1['PreviousARTStatus'].isna()) & (df1['PreviousLastPickupDate'].notnull()), 'PreviousARTStatus'] = df1['Previousrevalidation']
-    
-    df1['PreviousARTStatusDate'] = df1['PatientOutcomeDatePreviousQuarter']
-    df1.loc[(df1['PreviousARTStatus'] == 'LTFU') & (df1['PreviousARTStatusDate'].isna()), 'PreviousARTStatusDate'] = df1['PreviousIITDate']
-    df1.loc[(df1['PreviousARTStatus'] == 'Active') & (df1['PreviousARTStatusDate'].isna()), 'PreviousARTStatusDate'] = df1['PreviousLastPickupDate']
-    
-    
     #drop columns
-    df1 = df1.drop(['IIT DATE PREV QUARTER','Revalidation status prev quarter', 'PreviousLastPickupDate', 'PreviousDaysOfARVRefil', 'PreviousIITDate', 'RTC', 'Previousrevalidation'], axis=1)
+    df1 = df1.drop(['IIT DATE PREV QUARTER','Revalidation status prev quarter', 'PreviousLastPickupDate', 'PreviousDaysOfARVRefil', 'PreviousIITDate', 'RTC'], axis=1)
     
     
     #df1['Biometric_date']=df1['uuid'].map(df2.set_index('uuid')['Biometric_date'])
@@ -715,16 +706,7 @@ def nmrscripttoRadet():
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'IIT Chance (%)']=df['IITChance']
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'Date calculated (yyyy-mm-dd)']=df['IIT DATE']
     
-    #rename previous ART status
-    df.loc[(df['TransferInStatus'] == 'Transfer in with records') & ((df['PreviousARTStatus']== "Active")),'PreviousARTStatus']='Active-Transfer In'
-    df.loc[(df['LastPickupDate'] == df['ARTStartDate']) & ((df['PreviousARTStatus'].isna())),'PreviousARTStatus']='HIV+ non ART'
-    df.loc[(df['LastPickupDate'] == df['ARTStartDate']) & ((df['PreviousARTStatusDate'].isna())),'PreviousARTStatusDate']=df['EnrollmentDate']
-    df.loc[df['PreviousARTStatus']=="Death",'PreviousARTStatus']='Dead'
-    df.loc[df['PreviousARTStatus']=="Discontinued Care",'PreviousARTStatus']='Stopped'
-    df.loc[df['PreviousARTStatus']=="Transferred out",'PreviousARTStatus']='Transferred Out'
-    df.loc[df['PreviousARTStatus']=="LTFU",'PreviousARTStatus']='IIT'
-    
-    #Add restarts, transfer-in and status at registration to current ART status in Radet
+    #Add restarts, transfer-in and status at registration to Radet
     df.loc[(df['DateReturnedToCare'].notnull()) & (df['CurrentARTStatus']== "Active"),'CurrentARTStatus']='Active-Restart'
     df.loc[(df['DateReturnedToCare'].notnull()) & ((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus'] == "Active-Restart")),'PatientOutcomeDate']=df['DateReturnedToCare']
     df.loc[(df['TransferInStatus'] == 'Transfer in with records') & ((df['CurrentARTStatus']== "Active")),'CurrentARTStatus']='Active-Transfer In'
@@ -768,8 +750,8 @@ def nmrscripttoRadet():
                 'Date of VL Result After VL Sample Collection (yyyy-mm-dd)',
                 'Status at Registration',
                 'EnrollmentDate',
-                'PreviousARTStatus',
-                'PreviousARTStatusDate',
+                'ARTStatusPreviousQuarter',
+                'PatientOutcomeDatePreviousQuarter',
                 'CurrentARTStatus',
                 'PatientOutcomeDate',
                 'RTT',
@@ -800,7 +782,7 @@ def nmrscripttoRadet():
                 'Case Manager']]
     
     #Convert Date Objects to Date
-    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PreviousARTStatusDate','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','BiometricCaptureDate','Date calculated (yyyy-mm-dd)']
+    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PatientOutcomeDatePreviousQuarter','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','BiometricCaptureDate','Date calculated (yyyy-mm-dd)']
     for col in dfDates:
         df[col] = pd.to_datetime(df[col],errors='coerce').dt.date
     
@@ -1122,15 +1104,6 @@ def nmrscripttoRadet2():
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'IIT Chance (%)']=df['IITChance']
     df.loc[(((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")) & (df['IITChance'] >= 0)),'Date calculated (yyyy-mm-dd)']=df['IIT DATE']
     
-    #rename previous ART status
-    df.loc[(df['TransferInStatus'] == 'Transfer in with records') & ((df['PreviousARTStatus']== "Active")),'PreviousARTStatus']='Active-Transfer In'
-    df.loc[(df['LastPickupDate'] == df['ARTStartDate']) & ((df['PreviousARTStatus'].isna())),'PreviousARTStatus']='HIV+ non ART'
-    df.loc[(df['LastPickupDate'] == df['ARTStartDate']) & ((df['PreviousARTStatusDate'].isna())),'PreviousARTStatusDate']=df['EnrollmentDate']
-    df.loc[df['PreviousARTStatus']=="Death",'PreviousARTStatus']='Dead'
-    df.loc[df['PreviousARTStatus']=="Discontinued Care",'PreviousARTStatus']='Stopped'
-    df.loc[df['PreviousARTStatus']=="Transferred out",'PreviousARTStatus']='Transferred Out'
-    df.loc[df['PreviousARTStatus']=="LTFU",'PreviousARTStatus']='IIT'
-    
     #Add restarts and transfer in and status at registration to Radet
     df.loc[(df['DateReturnedToCare'].notnull()) & ((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus']== "Active(A)")),'CurrentARTStatus']='Active-Restart'
     df.loc[(df['DateReturnedToCare'].notnull()) & ((df['CurrentARTStatus']== "Active") | (df['CurrentARTStatus'] == "Active-Restart") | (df['CurrentARTStatus']== "Active(A)")),'PatientOutcomeDate']=df['DateReturnedToCare']
@@ -1176,8 +1149,8 @@ def nmrscripttoRadet2():
                 'Date of VL Result After VL Sample Collection (yyyy-mm-dd)',
                 'Status at Registration',
                 'EnrollmentDate',
-                'PreviousARTStatus',
-                'PreviousARTStatusDate',
+                'ARTStatusPreviousQuarter',
+                'PatientOutcomeDatePreviousQuarter',
                 'CurrentARTStatus',
                 'PatientOutcomeDate',
                 'RTT',
@@ -1208,7 +1181,7 @@ def nmrscripttoRadet2():
                 'Case Manager']]
     
     #Convert Date Objects to Date
-    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PreviousARTStatusDate','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','BiometricCaptureDate','Date calculated (yyyy-mm-dd)']
+    dfDates = ['DOB','ARTStartDate','LastPickupDate','LastINHDispensedDate','TPT Completion date (yyyy-mm-dd)','Date of Regimen Switch/ Substitution (yyyy-mm-dd)','Date of Full Disclosure (yyyy-mm-dd)', 'Date of Viral Load Sample Collection (yyyy-mm-dd)','Date of Current Viral Load (yyyy-mm-dd)','Date of VL Result After VL Sample Collection (yyyy-mm-dd)','EnrollmentDate','PatientOutcomeDatePreviousQuarter','PatientOutcomeDate','Date Commenced DMOC (yyyy-mm-dd)','Date of Return of DMOC Client to Facility (yyyy-mm-dd)','Date of Commencement of EAC (yyyy-mm-dd)','Date of 3rd EAC Completion (yyyy-mm-dd)','Date of Extended EAC Completion (yyyy-mm-dd)','Date of Repeat Viral Load - Post EAC VL Sample Collected (yyyy-mm-dd)','Date of Cervical Cancer Screening (yyyy-mm-dd)','Date of Precancerous Lesions Treatment (yyyy-mm-dd)','BiometricCaptureDate','Date calculated (yyyy-mm-dd)']
     for col in dfDates:
         df[col] = pd.to_datetime(df[col],errors='coerce').dt.date
     
@@ -1394,7 +1367,7 @@ def CreateToolTip(widget, text):
     
 # Creating Main Window
 root = tk.Tk()
-root.title("NETO's NMRS STATE MAKESHIFT GENERATOR v3.1")
+root.title("NETO's NMRS STATE MAKESHIFT GENERATOR v3")
 root.geometry("650x520")
 root.config(bg="#f0f0f0")
 
